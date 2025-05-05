@@ -1,0 +1,16 @@
+# Python 編譯暫存檔案
+__pycache__/
+*.pyc
+
+# Jupyter Notebook 的自動儲存檔案
+*.ipynb_checkpoints
+*.ipynb
+
+# 虛擬環境與設定檔
+venv/
+.env
+*.env
+
+# 作業系統產生的雜項垃圾
+.DS_Store
+Thumbs.db
