@@ -91,20 +91,33 @@ def callback():
 @handler.add(MessageEvent, message=TextMessageContent)
 def message_text(event):
     user_message = event.message.text
+    user_id = getattr(event.source, "user_id", "anonymous")
+
+    # 初始化使用者歷史
+    if user_id not in chat_history:
+        chat_history[user_id] = []
+
     if user_message == 'Sticker':
-        reply_text = StickerMessage(
-            package_id="1",
-            sticker_id="2"
-        )
-        
+        sticker_msg = StickerMessage(package_id="1", sticker_id="2")
+        reply_data = {
+            "type": "sticker",
+            "package_id": "1",
+            "sticker_id": "2"
+        }
+
+        chat_history[user_id].append({
+            "question": user_message,
+            "answer": reply_data
+        })
+
         with ApiClient(configuration) as api_client:
-            line_bot_api = MessagingApi(api_client)
-            line_bot_api.reply_message_with_http_info(
+            MessagingApi(api_client).reply_message_with_http_info(
                 ReplyMessageRequest(
                     reply_token=event.reply_token,
-                    messages=[reply_text]
+                    messages=[sticker_msg]
                 )
             )
+
     else:
         prompt = role + user_message if len(chat.history) == 0 else user_message
         try:
@@ -113,27 +126,22 @@ def message_text(event):
         except Exception as e:
             print(e)
             reply_text = "我媽來了，她說不能聊這個(雙手比叉)"
-        
+
+        chat_history[user_id].append({
+            "question": user_message,
+            "answer": {
+                "type": "text",
+                "text": reply_text
+            }
+        })
+
         with ApiClient(configuration) as api_client:
-            line_bot_api = MessagingApi(api_client)
-            line_bot_api.reply_message_with_http_info(
+            MessagingApi(api_client).reply_message_with_http_info(
                 ReplyMessageRequest(
                     reply_token=event.reply_token,
                     messages=[TextMessage(text=reply_text)]
                 )
             )
-    # 組合角色與對話
-    user_id = getattr(event.source, "user_id", "anonymous")
-    print("使用者 ID：", user_id)
-
-    # 初始化該使用者的歷史對話
-    if user_id not in chat_history:
-        chat_history[user_id] = []
-
-    chat_history[user_id].append({
-        "question": user_message,
-        "answer": reply_text
-    })
 
 # get RESTful API
 @app.route("/history/<user_id>", methods=["GET"])
