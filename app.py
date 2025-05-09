@@ -47,9 +47,13 @@ llm = genai.GenerativeModel(
 chat = llm.start_chat(history=[])
 # Please replace the content with your own role description
 role = """
+如果有人下關鍵字"情緒"的話，你就直接判斷後面的語句的情緒分析，回答的格式是"情緒:"後面接這句話的情緒。
+除了下關鍵字"情緒"以外，你不要回覆情緒相關的回答。
 妳是一個資工電腦專家，別人問妳這個問題妳可以用專業的知識來回答。
 但如果有人問妳其他類型的問題，妳也可以回答得很好。
-以下是對方問的問題，你直接用這個角色回答就好，不用再舉例。
+如果別人問你問題，你可以回答
+"你好！有什麼我可以幫忙的嗎？  請儘管提出你的問題，無論是關於電腦科學、軟體工程，或是其他任何領域，我都會盡力以專業且清晰的方式回答。"。
+除非有人要求你用不同語言回答，不然你都是用繁體中文回答。
 """
 genai.configure(api_key=config["Gemini"]["API_KEY"])
 
@@ -72,6 +76,27 @@ handler = WebhookHandler(channel_secret)
 configuration = Configuration(
     access_token=channel_access_token
 )
+
+city_translation = {
+    "台北": "Taipei",
+    "新北": "New Taipei",
+    "桃園": "Taoyuan",
+    "台中": "Taichung",
+    "台南": "Tainan",
+    "高雄": "Kaohsiung",
+    "基隆": "Keelung",
+    "新竹": "Hsinchu",
+    "嘉義": "Chiayi",
+    "南投": "Nantou",
+    "宜蘭": "Yilan",
+    "花蓮": "Hualien",
+    "台東": "Taitung",
+    "澎湖": "Penghu",
+    "金門": "Kinmen",
+    "連江": "Lienchiang"
+}
+# 建立英文 → 中文對應（自動反轉）
+city_translation_reverse = {v: k for k, v in city_translation.items()}
 
 @app.route("/callback", methods=['POST'])
 def callback():
@@ -97,19 +122,32 @@ def message_text(event):
     if user_id not in chat_history:
         chat_history[user_id] = []
 
-    if user_message == 'Sticker':
+    # 查詢 ID
+    if user_message.lower() == "id":
+        reply_text = f"你的 LINE ID 是：{user_id}"
+
+    elif user_message.endswith("天氣"):
+        city = user_message.replace("天氣", "").strip()
+
+        if city == "":
+            reply_text = "請輸入城市，例如：台北天氣"
+        else:
+            city_en = city_translation.get(city, city)  # 找不到就原樣傳入
+            reply_text = get_weather(city_en)
+
+
+    # 發送貼圖
+    elif user_message == 'Sticker':
         sticker_msg = StickerMessage(package_id="1", sticker_id="2")
         reply_data = {
             "type": "sticker",
             "package_id": "1",
             "sticker_id": "2"
         }
-
         chat_history[user_id].append({
             "question": user_message,
             "answer": reply_data
         })
-
         with ApiClient(configuration) as api_client:
             MessagingApi(api_client).reply_message_with_http_info(
                 ReplyMessageRequest(
@@ -117,7 +155,9 @@ def message_text(event):
                     messages=[sticker_msg]
                 )
             )
+        return  # 不處理下面的文字
 
+    # 一般 Gemini 回覆
     else:
         prompt = role + user_message if len(chat.history) == 0 else user_message
         try:
@@ -127,21 +167,43 @@ def message_text(event):
             print(e)
             reply_text = "我媽來了，她說不能聊這個(雙手比叉)"
 
-        chat_history[user_id].append({
-            "question": user_message,
-            "answer": {
-                "type": "text",
-                "text": reply_text
-            }
-        })
+    # 儲存文字回應
+    chat_history[user_id].append({
+        "question": user_message,
+        "answer": reply_text
+    })
 
-        with ApiClient(configuration) as api_client:
-            MessagingApi(api_client).reply_message_with_http_info(
-                ReplyMessageRequest(
-                    reply_token=event.reply_token,
-                    messages=[TextMessage(text=reply_text)]
-                )
+    with ApiClient(configuration) as api_client:
+        MessagingApi(api_client).reply_message_with_http_info(
+            ReplyMessageRequest(
+                reply_token=event.reply_token,
+                messages=[TextMessage(text=reply_text)]
             )
+        )
+
+
+import requests
+
+def get_weather(city_name):
+    api_key = config["Weather"]["API_KEY"]
+    url = f"https://api.openweathermap.org/data/2.5/weather?q={city_name}&appid={api_key}&lang=zh_tw&units=metric"
+    try:
+        res = requests.get(url, timeout=10)
+        data = res.json()
+
+        if data.get("cod") != 200:
+            return f"找不到「{city_name}」的天氣資訊。"
+
+        weather = data["weather"][0]["description"]
+        temp = data["main"]["temp"]
+        feels_like = data["main"]["feels_like"]
+        city_zh = city_translation_reverse.get(city_name, city_name)
+        return f"{city_zh} 現在天氣「{weather}」，氣溫 {temp:.1f}°C，體感 {feels_like:.1f}°C。"
+
+    except Exception as e:
+        print(e)
+        return "天氣查詢失敗，請稍後再試。"
+
 
 # get RESTful API
 @app.route("/history/<user_id>", methods=["GET"])
